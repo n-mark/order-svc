@@ -1,0 +1,93 @@
+name: billing-svc
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: billing-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PG_USER:-billing}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-billing}
+      POSTGRES_DB: ${PG_DATABASE:-billing}
+    volumes:
+      # Persist data across container restarts / recreations
+      - pgdata:/var/lib/postgresql/data
+      # DB initialization: applied once on first boot of an empty volume
+      - ./migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+    ports:
+      - "${PG_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-billing} -d ${PG_DATABASE:-billing}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - billing-net
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: billing-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBIT_USERNAME:-billing}
+      RABBITMQ_DEFAULT_PASS: ${RABBIT_PASSWORD:-billing}
+    volumes:
+      - rabbitdata:/var/lib/rabbitmq
+    ports:
+      - "${RABBIT_PORT:-5672}:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - billing-net
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: billing-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      BROKER_TYPE: ${BROKER_TYPE:-RABBITMQ}
+
+      PG_HOST: postgres
+      PG_PORT: ${PG_PORT:-5432}
+      PG_USER: ${PG_USER:-billing}
+      PG_PASSWORD: ${PG_PASSWORD:-billing}
+      PG_DATABASE: ${PG_DATABASE:-billing}
+      PG_SSLMODE: disable
+
+      RABBIT_HOST: rabbitmq
+      RABBIT_PORT: ${RABBIT_PORT:-5672}
+      RABBIT_USERNAME: ${RABBIT_USERNAME:-billing}
+      RABBIT_PASSWORD: ${RABBIT_PASSWORD:-billing}
+      RABBIT_PROFILE_QUEUE: ${RABBIT_PROFILE_QUEUE:-profile.created}
+      RABBIT_ORDER_QUEUE: ${RABBIT_ORDER_QUEUE:-order.created}
+      RABBIT_BILLING_EXCHANGE: ${RABBIT_BILLING_EXCHANGE:-billing}
+      RABBIT_PROFILE_RK: ${RABBIT_PROFILE_RK:-${RABBIT_PROFILE_QUEUE:-profile.created}}
+      RABBIT_ORDER_RK: ${RABBIT_ORDER_RK:-${RABBIT_ORDER_QUEUE:-order.created}}
+      RABBIT_BILLING_ACCOUNT_CREATED_RK: ${RABBIT_BILLING_ACCOUNT_CREATED_RK:-billing.account.created}
+      RABBIT_BILLING_PAYMENT_SUCCESS_RK: ${RABBIT_BILLING_PAYMENT_SUCCESS_RK:-billing.payment.success}
+      RABBIT_BILLING_PAYMENT_REQUIRED_RK: ${RABBIT_BILLING_PAYMENT_REQUIRED_RK:-billing.payment.required}
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    networks:
+      - billing-net
+
+volumes:
+  pgdata:
+    driver: local
+  rabbitdata:
+    driver: local
+
+networks:
+  billing-net:
+    driver: bridge
