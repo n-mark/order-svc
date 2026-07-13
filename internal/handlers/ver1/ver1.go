@@ -1,42 +1,41 @@
 package ver1
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"billing-svc/internal/models"
 	"billing-svc/internal/service"
 	"billing-svc/internal/store"
-
-	"encoding/json"
 )
 
-type BillingHandler struct {
+type OrderHandler struct {
 	order service.OrderService
 }
 
-func NewBillingHandler(order service.OrderService) *BillingHandler {
-	return &BillingHandler{
-		order: order}
+func NewOrderHandler(order service.OrderService) *OrderHandler {
+	return &OrderHandler{order: order}
 }
 
-// --- AMQP-driven handlers (signature is dictated by messaging.HandlerFunc) ---
+// --- broker-driven handlers (signature is dictated by messaging.HandlerFunc) ---
 
-func (h *BillingHandler) UpdateOrderAfterBillingResponse(body []byte) (bool, error) {
+// UpdateOrderAfterBillingResponse is invoked when billing-svc reports a
+// payment result via broker.
+func (h *OrderHandler) UpdateOrderAfterBillingResponse(body []byte) (bool, error) {
 	payload := models.BillingResponse{}
 	if err := json.Unmarshal(body, &payload); err != nil {
-		slog.Error("failed to unmarshal", "error", err)
+		slog.Error("failed to unmarshal billing response", "error", err)
 		return false, err
 	}
 
-	h.order.UpdateOrderStatusOnBillingResponse()
-
-	return true, nil
-	//h.billing.CreateBillingAccount(context.Background(), payload)
+	return h.order.UpdateOrderStatusOnBillingResponse(context.Background(), payload)
 }
 
 // --- HTTP handlers (Gin) ---
@@ -55,75 +54,61 @@ func parseUserID(c *gin.Context) (int64, bool) {
 	return id, true
 }
 
-func (h *BillingHandler) AddMoneyHandler(c *gin.Context) {
+// CreateOrderHandler handles POST /api/v1/order.
+func (h *OrderHandler) CreateOrderHandler(c *gin.Context) {
 	userId, ok := parseUserID(c)
 	if !ok {
 		return
 	}
 
-	req := moneyRequest{}
+	req := createOrderRequest{}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	slog.Info("ADD MONEY HANDLER INVOKED", "user_id", userId, "amount", req.Amount)
+	slog.Info("CREATE ORDER HANDLER INVOKED", "user_id", userId, "price", req.Price)
 
-	b, err := h.billing.AddMoney(c.Request.Context(), userId, req.Amount)
+	ord, err := h.order.CreateOrder(c.Request.Context(), userId, req.Price)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusAccepted, ord)
+}
+
+// GetOrderHandler handles GET /api/v1/order/:id.
+func (h *OrderHandler) GetOrderHandler(c *gin.Context) {
+	idStr := c.Param("id")
+	orderId, err := uuid.Parse(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid order id"})
+		return
+	}
+
+	ord, err := h.order.GetOrder(c.Request.Context(), orderId)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "billing account not found"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "order not found"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, b)
+	c.JSON(http.StatusOK, ord)
 }
 
-func (h *BillingHandler) WithdrawMoneyHandler(c *gin.Context) {
+// ListOrdersHandler handles GET /api/v1/order (all orders for x-user-id).
+func (h *OrderHandler) ListOrdersHandler(c *gin.Context) {
 	userId, ok := parseUserID(c)
 	if !ok {
 		return
 	}
 
-	req := moneyRequest{}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	slog.Info("WITHDRAW MONEY HANDLER INVOKED", "user_id", userId, "amount", req.Amount)
-
-	b, err := h.billing.Withdraw(c.Request.Context(), userId, req.Amount)
+	orders, err := h.order.ListOrders(c.Request.Context(), userId)
 	if err != nil {
-		switch {
-		case errors.Is(err, store.ErrNotFound):
-			c.JSON(http.StatusNotFound, gin.H{"error": "billing account not found"})
-		case errors.Is(err, store.ErrInsufficientFunds):
-			c.JSON(http.StatusPaymentRequired, gin.H{"error": "insufficient funds"})
-		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		}
-		return
-	}
-	c.JSON(http.StatusOK, b)
-}
-
-func (h *BillingHandler) GetBillingHandler(c *gin.Context) {
-	userId, ok := parseUserID(c)
-	if !ok {
-		return
-	}
-
-	b, err := h.billing.GetByUserId(c.Request.Context(), userId)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "billing account not found"})
-			return
-		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, b)
+	c.JSON(http.StatusOK, orders)
 }

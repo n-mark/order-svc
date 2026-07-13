@@ -11,14 +11,17 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-    go build -trimpath -ldflags="-s -w" -o /out/billing-svc ./
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/order-svc ./
 
 # --- runtime stage ---
 FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /app
 
-COPY --from=build /out/billing-svc /app/billing-svc
+COPY --from=build /out/order-svc /app/order-svc
 
 USER nonroot:nonroot
-ENTRYPOINT ["/app/billing-svc"]
+ENTRYPOINT ["/app/order-svc"]

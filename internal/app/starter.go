@@ -44,7 +44,7 @@ func RunCommonServer() {
 	}
 
 	orderSvc := service.NewOrderService(pgStore, b)
-	h := ver1.NewBillingHandler(*orderSvc)
+	h := ver1.NewOrderHandler(*orderSvc)
 
 	b.RegisterConsumer(b.GetBillingPaymentDataSourceName(), h.UpdateOrderAfterBillingResponse)
 

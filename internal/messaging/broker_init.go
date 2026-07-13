@@ -9,8 +9,8 @@ import (
 type Broker interface {
 	RegisterConsumer(dataSourceName string, h HandlerFunc)
 	Run()
-	ReportOrderCreated(b models.Billing) error
-	ReportOrderUpdated(b models.Billing) error
+	ReportOrderCreated(e models.OrderCreatedEvent) error
+	ReportOrderUpdated(e models.OrderUpdatedEvent) error
 	GetBillingPaymentDataSourceName() string
 }
 

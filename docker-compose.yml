@@ -1,86 +1,86 @@
-name: billing-svc
+name: order-svc
 
 services:
-  postgres:
+  postgres2:
     image: postgres:16-alpine
-    container_name: billing-postgres
+    container_name: order-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${PG_USER:-billing}
-      POSTGRES_PASSWORD: ${PG_PASSWORD:-billing}
-      POSTGRES_DB: ${PG_DATABASE:-billing}
+      POSTGRES_USER: ${PG_USER:-order}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-order}
+      POSTGRES_DB: ${PG_DATABASE:-order}
     volumes:
-      # Persist data across container restarts / recreations
       - pgdata:/var/lib/postgresql/data
-      # DB initialization: applied once on first boot of an empty volume
       - ./migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
     ports:
-      - "${PG_PORT:-5432}:5432"
+      - "${PG_PORT:-5433}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-billing} -d ${PG_DATABASE:-billing}"]
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-order} -d ${PG_DATABASE:-order}"]
       interval: 5s
       timeout: 5s
       retries: 10
     networks:
-      - billing-net
+      - shared-network
 
-  rabbitmq:
-    image: rabbitmq:3.13-management-alpine
-    container_name: billing-rabbitmq
-    restart: unless-stopped
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBIT_USERNAME:-billing}
-      RABBITMQ_DEFAULT_PASS: ${RABBIT_PASSWORD:-billing}
-    volumes:
-      - rabbitdata:/var/lib/rabbitmq
-    ports:
-      - "${RABBIT_PORT:-5672}:5672"
-      - "15672:15672"
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-    networks:
-      - billing-net
+  # rabbitmq:
+  #   image: rabbitmq:3.13-management-alpine
+  #   container_name: order-rabbitmq
+  #   restart: unless-stopped
+  #   environment:
+  #     RABBITMQ_DEFAULT_USER: ${RABBIT_USERNAME:-order}
+  #     RABBITMQ_DEFAULT_PASS: ${RABBIT_PASSWORD:-order}
+  #   volumes:
+  #     - rabbitdata:/var/lib/rabbitmq
+  #   ports:
+  #     - "${RABBIT_PORT:-5672}:5672"
+  #     - "15672:15672"
+  #   healthcheck:
+  #     test: ["CMD", "rabbitmq-diagnostics", "ping"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 10
+  #   networks:
+  #     - shared-network
 
   app:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: billing-app
+    container_name: order-app
     restart: unless-stopped
     depends_on:
-      postgres:
+      postgres2:
         condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
+      # rabbitmq:
+      #   condition: service_healthy
     environment:
       BROKER_TYPE: ${BROKER_TYPE:-RABBITMQ}
 
-      PG_HOST: postgres
-      PG_PORT: ${PG_PORT:-5432}
-      PG_USER: ${PG_USER:-billing}
-      PG_PASSWORD: ${PG_PASSWORD:-billing}
-      PG_DATABASE: ${PG_DATABASE:-billing}
+      PG_HOST: postgres2
+      PG_PORT: 5432
+      PG_USER: ${PG_USER:-order}
+      PG_PASSWORD: ${PG_PASSWORD:-order}
+      PG_DATABASE: ${PG_DATABASE:-order}
       PG_SSLMODE: disable
 
       RABBIT_HOST: rabbitmq
-      RABBIT_PORT: ${RABBIT_PORT:-5672}
+      RABBIT_PORT: 5672
       RABBIT_USERNAME: ${RABBIT_USERNAME:-billing}
       RABBIT_PASSWORD: ${RABBIT_PASSWORD:-billing}
-      RABBIT_PROFILE_QUEUE: ${RABBIT_PROFILE_QUEUE:-profile.created}
-      RABBIT_ORDER_QUEUE: ${RABBIT_ORDER_QUEUE:-order.created}
+
+      # Exchange this service publishes to (consumed by billing-svc / notification-svc)
+      RABBIT_ORDER_EXCHANGE: ${RABBIT_ORDER_EXCHANGE:-order}
+      RABBIT_ORDER_CREATED_ROUTING_KEY: ${RABBIT_ORDER_CREATED_ROUTING_KEY:-order.created}
+      RABBIT_ORDER_UPDATED_ROUTING_KEY: ${RABBIT_ORDER_UPDATED_ROUTING_KEY:-order.updated}
+
+      # Exchange this service consumes from (produced by billing-svc)
       RABBIT_BILLING_EXCHANGE: ${RABBIT_BILLING_EXCHANGE:-billing}
-      RABBIT_PROFILE_RK: ${RABBIT_PROFILE_RK:-${RABBIT_PROFILE_QUEUE:-profile.created}}
-      RABBIT_ORDER_RK: ${RABBIT_ORDER_RK:-${RABBIT_ORDER_QUEUE:-order.created}}
-      RABBIT_BILLING_ACCOUNT_CREATED_RK: ${RABBIT_BILLING_ACCOUNT_CREATED_RK:-billing.account.created}
-      RABBIT_BILLING_PAYMENT_SUCCESS_RK: ${RABBIT_BILLING_PAYMENT_SUCCESS_RK:-billing.payment.success}
-      RABBIT_BILLING_PAYMENT_REQUIRED_RK: ${RABBIT_BILLING_PAYMENT_REQUIRED_RK:-billing.payment.required}
+      RABBIT_BILLING_CONSUMER: ${RABBIT_BILLING_CONSUMER:-ordersvc.consumer.for.billing.payment}
+      RABBIT_BILLING_CONSUMER_ROUTING_KEY: ${RABBIT_BILLING_CONSUMER_ROUTING_KEY:-billing.payment.*}
     ports:
-      - "${APP_PORT:-8080}:8080"
+      - "${APP_PORT:-8081}:8080"
     networks:
-      - billing-net
+      - shared-network
 
 volumes:
   pgdata:
@@ -89,5 +89,6 @@ volumes:
     driver: local
 
 networks:
-  billing-net:
-    driver: bridge
+  shared-network:
+    external: true
+    name: shared-network

@@ -1,16 +1,18 @@
 package service
 
 import (
-	"billing-svc/internal/models"
 	"context"
 
 	"github.com/google/uuid"
+
+	"billing-svc/internal/models"
 )
 
 type Store interface {
-	Save(ctx context.Context, p models.Order) (models.Billing, error)
-	Update(ctx context.Context, p models.Order) (models.Billing, error)
-	GetByUserId(ctx context.Context, userId int64) (models.Billing, error)
+	CreateOrder(ctx context.Context, o models.Order) (models.Order, error)
+	UpdateOrderStatus(ctx context.Context, orderId uuid.UUID, status string) (models.Order, error)
+	GetOrder(ctx context.Context, orderId uuid.UUID) (models.Order, error)
+	ListOrdersByUser(ctx context.Context, userId int64) ([]models.Order, error)
 
 	EventAlreadyProcessed(ctx context.Context, eventID uuid.UUID) (bool, error)
 	MarkEventProcessed(ctx context.Context, eventID uuid.UUID, eventType string) error

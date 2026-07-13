@@ -106,36 +106,37 @@ func (r *RabbitImpl) RegisterConsumer(queueName string, h HandlerFunc) {
 	r.consumers[queueName] = h
 }
 
-func (r *RabbitImpl) ProduceOrderEvent(routingKey string, b models.Billing) error {
-	body, err := json.Marshal(b)
-	if err != nil {
-		return fmt.Errorf("marshal order event: %w", err)
-	}
-
+func (r *RabbitImpl) produceOrderEvent(routingKey, messageId string, body []byte) error {
 	r.publisherLock.Lock()
 	defer r.publisherLock.Unlock()
 
-	r.publisher.Publish(
+	return r.publisher.Publish(
 		r.cfg.OrderExchange, routingKey, false, false,
 		amqp.Publishing{
 			ContentType:  "application/json",
 			DeliveryMode: amqp.Persistent,
-			MessageId:    b.EventId.String(),
+			MessageId:    messageId,
 			Body:         body,
 		},
 	)
-
-	return nil
 }
 
-func (r *RabbitImpl) ReportOrderCreated(b models.Billing) error {
-	slog.Info("rabbit impl updating profile")
-	return r.ProduceOrderEvent(r.cfg.OrderCreatedRoutingKey, b)
+func (r *RabbitImpl) ReportOrderCreated(e models.OrderCreatedEvent) error {
+	body, err := json.Marshal(e)
+	if err != nil {
+		return fmt.Errorf("marshal order.created: %w", err)
+	}
+	slog.Info("publishing order.created", "order_id", e.OrderId, "rk", r.cfg.OrderCreatedRoutingKey)
+	return r.produceOrderEvent(r.cfg.OrderCreatedRoutingKey, e.EventId.String(), body)
 }
 
-func (r *RabbitImpl) ReportOrderUpdated(b models.Billing) error {
-	slog.Info("rabbit impl updating profile")
-	return r.ProduceOrderEvent(r.cfg.OrderUpdatedRoutingKey, b)
+func (r *RabbitImpl) ReportOrderUpdated(e models.OrderUpdatedEvent) error {
+	body, err := json.Marshal(e)
+	if err != nil {
+		return fmt.Errorf("marshal order.updated: %w", err)
+	}
+	slog.Info("publishing order.updated", "order_id", e.OrderId, "status", e.Status, "rk", r.cfg.OrderUpdatedRoutingKey)
+	return r.produceOrderEvent(r.cfg.OrderUpdatedRoutingKey, e.EventId.String(), body)
 }
 
 func (r *RabbitImpl) Run() {

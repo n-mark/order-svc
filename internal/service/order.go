@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/google/uuid"
@@ -18,67 +19,88 @@ func NewOrderService(s Store, rw ResponseWriter) *OrderService {
 	return &OrderService{store: s, responseWriter: rw}
 }
 
-func (o *OrderService) ProcessOrder(ctx context.Context, order models.Order) (bool, error) {
-	slog.Info("PROCESSING ORDER...", "order", order)
-
-	// Idempotency check.
-	if dup, err := o.store.EventAlreadyProcessed(ctx, order.EventId); err != nil {
-		return false, err
-	} else if dup {
-		slog.Info("order already processed, skipping", "event_id", order.EventId)
-		return true, nil
+// CreateOrder persists a new order in `pending` status and publishes an
+// `order.created` event so billing-svc can attempt to withdraw the money.
+func (o *OrderService) CreateOrder(ctx context.Context, userId int64, price float64) (models.Order, error) {
+	if price <= 0 {
+		return models.Order{}, errors.New("price must be positive")
 	}
 
-	resp, err := o.store.Save(ctx, order)
+	order := models.Order{
+		ID:     uuid.New(),
+		UserId: userId,
+		Price:  price,
+		Status: models.OrderStatusPending,
+	}
+
+	saved, err := o.store.CreateOrder(ctx, order)
 	if err != nil {
-		return false, err
+		return models.Order{}, err
 	}
 
-	pub := models.Billing{
+	evt := models.OrderCreatedEvent{
 		EventId:   uuid.New(),
-		EventType: "SUCCESSFULLY_PAID",
-		UserId:    resp.UserId,
-		OrderId:   order.OrderId,
-		Status:    "paid",
-		Balance:   resp.Balance,
+		EventType: "ORDER_CREATED",
+		OrderId:   saved.ID,
+		UserId:    saved.UserId,
+		Price:     saved.Price,
 	}
-	if err := o.responseWriter.ReportOrderUpdated(pub); err != nil {
-		return false, err
+	if err := o.responseWriter.ReportOrderCreated(evt); err != nil {
+		slog.Error("failed to publish order.created", "err", err, "order_id", saved.ID)
+		return models.Order{}, err
 	}
-	if err := o.store.MarkEventProcessed(ctx, order.EventId, "SUCCESSFULLY_PAID"); err != nil {
-		return false, err
-	}
-	return true, nil
+
+	slog.Info("order created", "order_id", saved.ID, "user_id", saved.UserId, "price", saved.Price)
+	return saved, nil
 }
 
-func (o *OrderService) UpdateOrderStatusOnBillingResponse(ctx context.Context, order models.BillingResponse) (bool, error) {
-	slog.Info("PROCESSING ORDER...", "order", order)
+// GetOrder returns a single order by id.
+func (o *OrderService) GetOrder(ctx context.Context, orderId uuid.UUID) (models.Order, error) {
+	return o.store.GetOrder(ctx, orderId)
+}
+
+// ListOrders returns all orders for the given user.
+func (o *OrderService) ListOrders(ctx context.Context, userId int64) ([]models.Order, error) {
+	return o.store.ListOrdersByUser(ctx, userId)
+}
+
+// UpdateOrderStatusOnBillingResponse consumes billing-svc's payment result,
+// flips the order status to `paid`/`failed`, and publishes an
+// `order.updated` event for the notification-svc.
+func (o *OrderService) UpdateOrderStatusOnBillingResponse(ctx context.Context, resp models.BillingResponse) (bool, error) {
+	slog.Info("handling billing response", "order_id", resp.OrderId, "status", resp.Status)
 
 	// Idempotency check.
-	if dup, err := o.store.EventAlreadyProcessed(ctx, order.EventId); err != nil {
+	if dup, err := o.store.EventAlreadyProcessed(ctx, resp.EventId); err != nil {
 		return false, err
 	} else if dup {
-		slog.Info("order already processed, skipping", "event_id", order.EventId)
+		slog.Info("billing response already processed, skipping", "event_id", resp.EventId)
 		return true, nil
 	}
 
-	resp, err := o.store.Save(ctx, order)
+	newStatus := models.OrderStatusFailed
+	if resp.Status == models.BillingStatusPaid {
+		newStatus = models.OrderStatusPaid
+	}
+
+	_, err := o.store.UpdateOrderStatus(ctx, resp.OrderId, newStatus)
 	if err != nil {
 		return false, err
 	}
 
-	pub := models.Billing{
-		EventId:   uuid.New(),
-		EventType: "SUCCESSFULLY_PAID",
-		UserId:    resp.UserId,
-		OrderId:   order.OrderId,
-		Status:    "paid",
-		Balance:   resp.Balance,
-	}
-	if err := o.responseWriter.ReportOrderUpdated(pub); err != nil {
-		return false, err
-	}
-	if err := o.store.MarkEventProcessed(ctx, order.EventId, "SUCCESSFULLY_PAID"); err != nil {
+	// evt := models.OrderUpdatedEvent{
+	// 	EventId:   uuid.New(),
+	// 	EventType: "ORDER_UPDATED",
+	// 	OrderId:   updated.ID,
+	// 	UserId:    updated.UserId,
+	// 	Price:     updated.Price,
+	// 	Status:    updated.Status,
+	// }
+	// if err := o.responseWriter.ReportOrderUpdated(evt); err != nil {
+	// 	return false, err
+	// }
+
+	if err := o.store.MarkEventProcessed(ctx, resp.EventId, "BILLING_RESPONSE"); err != nil {
 		return false, err
 	}
 	return true, nil

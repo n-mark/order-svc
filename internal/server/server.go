@@ -35,7 +35,7 @@ func requestLogger() gin.HandlerFunc {
 
 // RunRouter starts the HTTP API on $APP_PORT (default :8080) and blocks
 // until ctx is cancelled.
-func RunRouter(ctx context.Context, h *ver1.BillingHandler) {
+func RunRouter(ctx context.Context, h *ver1.OrderHandler) {
 	port := os.Getenv("APP_PORT")
 	if port == "" {
 		port = "8080"
@@ -51,10 +51,9 @@ func RunRouter(ctx context.Context, h *ver1.BillingHandler) {
 
 	api := router.Group("/api")
 	v1 := api.Group("/v1")
-	//v1.GET("/billing", h.GetBillingHandler)
-	//v1.PUT("/billing", h.AddMoneyHandler)
-	//v1.POST("/billing/withdraw", h.WithdrawMoneyHandler)
-	v1.POST("/order", h.AddMoneyHandler)
+	v1.POST("/order", h.CreateOrderHandler)
+	v1.GET("/order", h.ListOrdersHandler)
+	v1.GET("/order/:id", h.GetOrderHandler)
 
 	srv := newServer(":"+port, router)
 
