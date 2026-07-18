@@ -36,10 +36,10 @@ func (p *PgStore) CreateOrder(ctx context.Context, o models.Order) (models.Order
 		INSERT INTO orders (id, user_id, price, status)
 		VALUES ($1, $2, $3, $4)
 		RETURNING id, user_id, price, status, created_at, updated_at
-	`, o.ID, o.UserId, o.Price, o.Status)
+	`, o.ID, o.UserId, o.ToWithdraw, o.Status)
 
 	out := models.Order{}
-	if err := row.Scan(&out.ID, &out.UserId, &out.Price, &out.Status, &out.CreatedAt, &out.UpdatedAt); err != nil {
+	if err := row.Scan(&out.ID, &out.UserId, &out.ToWithdraw, &out.Status, &out.CreatedAt, &out.UpdatedAt); err != nil {
 		return models.Order{}, err
 	}
 	return out, nil
@@ -55,7 +55,7 @@ func (p *PgStore) UpdateOrderStatus(ctx context.Context, orderId uuid.UUID, stat
 	`, orderId, status)
 
 	out := models.Order{}
-	if err := row.Scan(&out.ID, &out.UserId, &out.Price, &out.Status, &out.CreatedAt, &out.UpdatedAt); err != nil {
+	if err := row.Scan(&out.ID, &out.UserId, &out.ToWithdraw, &out.Status, &out.CreatedAt, &out.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.Order{}, ErrNotFound
 		}
@@ -73,7 +73,7 @@ func (p *PgStore) GetOrder(ctx context.Context, orderId uuid.UUID) (models.Order
 	`, orderId)
 
 	out := models.Order{}
-	if err := row.Scan(&out.ID, &out.UserId, &out.Price, &out.Status, &out.CreatedAt, &out.UpdatedAt); err != nil {
+	if err := row.Scan(&out.ID, &out.UserId, &out.ToWithdraw, &out.Status, &out.CreatedAt, &out.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.Order{}, ErrNotFound
 		}
@@ -98,7 +98,7 @@ func (p *PgStore) ListOrdersByUser(ctx context.Context, userId int64) ([]models.
 	out := make([]models.Order, 0)
 	for rows.Next() {
 		var o models.Order
-		if err := rows.Scan(&o.ID, &o.UserId, &o.Price, &o.Status, &o.CreatedAt, &o.UpdatedAt); err != nil {
+		if err := rows.Scan(&o.ID, &o.UserId, &o.ToWithdraw, &o.Status, &o.CreatedAt, &o.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, o)

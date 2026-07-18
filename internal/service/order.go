@@ -27,10 +27,10 @@ func (o *OrderService) CreateOrder(ctx context.Context, userId int64, price floa
 	}
 
 	order := models.Order{
-		ID:     uuid.New(),
-		UserId: userId,
-		Price:  price,
-		Status: models.OrderStatusPending,
+		ID:         uuid.New(),
+		UserId:     userId,
+		ToWithdraw: price,
+		Status:     models.OrderStatusPending,
 	}
 
 	saved, err := o.store.CreateOrder(ctx, order)
@@ -39,18 +39,18 @@ func (o *OrderService) CreateOrder(ctx context.Context, userId int64, price floa
 	}
 
 	evt := models.OrderCreatedEvent{
-		EventId:   uuid.New(),
-		EventType: "ORDER_CREATED",
-		OrderId:   saved.ID,
-		UserId:    saved.UserId,
-		Price:     saved.Price,
+		EventId:    uuid.New(),
+		EventType:  "ORDER_CREATED",
+		OrderId:    saved.ID,
+		UserId:     saved.UserId,
+		ToWithdraw: saved.ToWithdraw,
 	}
 	if err := o.responseWriter.ReportOrderCreated(evt); err != nil {
 		slog.Error("failed to publish order.created", "err", err, "order_id", saved.ID)
 		return models.Order{}, err
 	}
 
-	slog.Info("order created", "order_id", saved.ID, "user_id", saved.UserId, "price", saved.Price)
+	slog.Info("order created", "order_id", saved.ID, "user_id", saved.UserId, "price", saved.ToWithdraw)
 	return saved, nil
 }
 
