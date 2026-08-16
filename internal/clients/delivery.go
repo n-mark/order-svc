@@ -40,7 +40,7 @@ func NewDeliveryClient(baseURL string) *DeliveryClient {
 
 // ProviderQuote returns the calculated price for a specific provider and weight.
 func (c *DeliveryClient) ProviderQuote(ctx context.Context, providerID int64, weightGrams int64) (float64, error) {
-	u, err := url.Parse(fmt.Sprintf("%s/api/v1/providers", c.baseURL))
+	u, err := url.Parse(fmt.Sprintf("%s/internal/v1/providers", c.baseURL))
 	if err != nil {
 		return 0, err
 	}

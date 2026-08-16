@@ -42,9 +42,9 @@ func NewAdvertClient(baseURL string) *AdvertClient {
 	}
 }
 
-// GetAdvert fetches a single advert by its UUID.
+// GetAdvert fetches a single advert by its UUID via the internal endpoint.
 func (c *AdvertClient) GetAdvert(ctx context.Context, id string) (Advert, error) {
-	url := fmt.Sprintf("%s/adverts/%s", c.baseURL, id)
+	url := fmt.Sprintf("%s/internal/v1/adverts/%s", c.baseURL, id)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

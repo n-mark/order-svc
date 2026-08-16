@@ -44,7 +44,7 @@ type createTransactionRequest struct {
 // given order. The amount is taken from order-svc's own record, never from the
 // client, so billing-svc can trust it as the source of truth.
 func (c *BillingClient) CreateTransaction(ctx context.Context, userID int64, orderID string, amount float64) (CreateTransactionResponse, error) {
-	url := fmt.Sprintf("%s/api/v1/transaction", c.baseURL)
+	url := fmt.Sprintf("%s/internal/v1/transaction", c.baseURL)
 
 	body, err := json.Marshal(createTransactionRequest{
 		OrderID: orderID,
