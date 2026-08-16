@@ -9,7 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"billing-svc/internal/handlers/ver1"
+	"order-svc/internal/handlers/ver1"
 )
 
 func newServer(addr string, h http.Handler) *http.Server {
@@ -54,6 +54,9 @@ func RunRouter(ctx context.Context, h *ver1.OrderHandler) {
 	v1.POST("/order", h.CreateOrderHandler)
 	v1.GET("/order", h.ListOrdersHandler)
 	v1.GET("/order/:id", h.GetOrderHandler)
+	v1.PATCH("/order/:id/delivery", h.SetDeliveryHandler)
+	v1.POST("/order/:id/cancel", h.CancelOrderHandler)
+	v1.POST("/order/:id/pay", h.PayOrderHandler)
 
 	srv := newServer(":"+port, router)
 

@@ -1,14 +1,15 @@
 package messaging
 
 import (
-	"billing-svc/internal/config"
-	"billing-svc/internal/models"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+
+	"order-svc/internal/config"
+	"order-svc/internal/models"
 )
 
 type HandlerFunc func(b []byte) (bool, error)
@@ -21,8 +22,13 @@ type RabbitImpl struct {
 	cfg           config.RabbitConfig
 }
 
-func (r *RabbitImpl) GetBillingPaymentDataSourceName() string {
-	return r.cfg.BillingConsumer
+// RabbitMQ filters server-side via the queue binding, so no EventTypes here.
+func (r *RabbitImpl) GetOrderPaymentSource() Source {
+	return Source{Name: r.cfg.OrderPaymentConsumer}
+}
+
+func (r *RabbitImpl) GetDeliverySource() Source {
+	return Source{Name: r.cfg.DeliveryConsumer}
 }
 
 func NewRabbitImpl(cfg config.RabbitConfig) (*RabbitImpl, error) {
@@ -38,127 +44,93 @@ func NewRabbitImpl(cfg config.RabbitConfig) (*RabbitImpl, error) {
 	}
 
 	r := &RabbitImpl{conn: conn, consumers: make(map[string]HandlerFunc), cfg: cfg, publisher: publisher}
-
 	return r, nil
 }
 
-// declareExchange ensures the topic exchange used for outbound billing
-// events exists. Idempotent: declaring an existing exchange with the same
-// type/params is a no-op. Fails if a non-topic exchange with the same name
-// already exists.
+// declareExchange declares a durable topic exchange (idempotent).
 func (r *RabbitImpl) declareExchange(ch *amqp.Channel, exchange string) error {
-	if r.cfg.BillingExchange == "" {
+	if exchange == "" {
 		return nil
 	}
-	return ch.ExchangeDeclare(
-		exchange,
-		"topic",
-		true,  // durable
-		false, // auto-delete
-		false, // internal
-		false, // no-wait
-		nil,
-	)
+	return ch.ExchangeDeclare(exchange, "topic", true, false, false, false, nil)
 }
 
-// declareQueueAndBind ensures the consumer queue exists (durable) and is
-// bound to the billing exchange with the queue's incoming routing key.
-// If BillingExchange is empty, only the queue is declared (default exchange).
+// declareQueueAndBind declares the consumer queue (durable) and binds it to the
+// exchange it consumes from.
 func (r *RabbitImpl) declareQueueAndBind(ch *amqp.Channel, queue string) error {
-	if _, err := ch.QueueDeclare(
-		queue,
-		true,  // durable
-		false, // auto-delete
-		false, // exclusive
-		false, // no-wait
-		nil,
-	); err != nil {
+	if _, err := ch.QueueDeclare(queue, true, false, false, false, nil); err != nil {
 		return fmt.Errorf("declare queue %q: %w", queue, err)
 	}
 
-	if r.cfg.BillingExchange == "" || r.cfg.OrderExchange == "" {
+	exchange, rk := r.bindingFor(queue)
+	if exchange == "" {
 		return nil
 	}
-
-	rks := r.routingKeyFor(queue)
-	if len(rks) == 0 {
-		return nil
+	if err := ch.QueueBind(queue, rk, exchange, false, nil); err != nil {
+		return fmt.Errorf("bind queue %q to %q with rk %q: %w", queue, exchange, rk, err)
 	}
-
-	for _, rk := range rks {
-		if err := ch.QueueBind(queue, rk, r.cfg.BillingExchange, false, nil); err != nil {
-			return fmt.Errorf("bind queue %q to %q with rk %q: %w", queue, r.cfg.BillingExchange, rk, err)
-		}
-	}
-
 	return nil
 }
 
-func (r *RabbitImpl) routingKeyFor(queue string) []string {
+// bindingFor returns the exchange and routing key a consumer queue binds to.
+func (r *RabbitImpl) bindingFor(queue string) (exchange, routingKey string) {
 	switch queue {
-	case r.cfg.BillingConsumer:
-		return []string{r.cfg.BillingConsumerRoutingKey}
+	case r.cfg.OrderPaymentConsumer:
+		return r.cfg.OrderPaymentExchange, r.cfg.OrderPaymentRoutingKey
+	case r.cfg.DeliveryConsumer:
+		return r.cfg.DeliveryExchange, r.cfg.DeliveryRoutingKey
 	}
-	return []string{}
+	return "", ""
 }
 
-func (r *RabbitImpl) RegisterConsumer(queueName string, h HandlerFunc) {
-	r.consumers[queueName] = h
+func (r *RabbitImpl) RegisterConsumer(s Source, h HandlerFunc) {
+	r.consumers[s.Name] = h
 }
 
-func (r *RabbitImpl) produceOrderEvent(routingKey, messageId string, body []byte) error {
+// PublishOrderEvent publishes an order event to the `order` exchange. The
+// routing key is the event type (ORDER_PAID / ORDER_CANCELLED).
+func (r *RabbitImpl) PublishOrderEvent(e models.OrderEvent) error {
+	body, err := json.Marshal(e)
+	if err != nil {
+		return fmt.Errorf("marshal order event: %w", err)
+	}
+
 	r.publisherLock.Lock()
 	defer r.publisherLock.Unlock()
 
+	slog.Info("publishing order event",
+		"exchange", r.cfg.OrderExchange, "event_type", e.EventType, "order_id", e.OrderId)
+
 	return r.publisher.Publish(
-		r.cfg.OrderExchange, routingKey, false, false,
+		r.cfg.OrderExchange, e.EventType, false, false,
 		amqp.Publishing{
 			ContentType:  "application/json",
 			DeliveryMode: amqp.Persistent,
-			MessageId:    messageId,
+			MessageId:    e.EventId.String(),
 			Body:         body,
 		},
 	)
-}
-
-func (r *RabbitImpl) ReportOrderCreated(e models.OrderCreatedEvent) error {
-	body, err := json.Marshal(e)
-	if err != nil {
-		return fmt.Errorf("marshal order.created: %w", err)
-	}
-	slog.Info("publishing order.created", "order_id", e.OrderId, "rk", r.cfg.OrderCreatedRoutingKey)
-	return r.produceOrderEvent(r.cfg.OrderCreatedRoutingKey, e.EventId.String(), body)
-}
-
-func (r *RabbitImpl) ReportOrderUpdated(e models.OrderUpdatedEvent) error {
-	body, err := json.Marshal(e)
-	if err != nil {
-		return fmt.Errorf("marshal order.updated: %w", err)
-	}
-	slog.Info("publishing order.updated", "order_id", e.OrderId, "status", e.Status, "rk", r.cfg.OrderUpdatedRoutingKey)
-	return r.produceOrderEvent(r.cfg.OrderUpdatedRoutingKey, e.EventId.String(), body)
 }
 
 func (r *RabbitImpl) Run() {
 	defer r.conn.Close()
 	defer r.publisher.Close()
 
-	exchangesToDeclare := []string{r.cfg.BillingExchange, r.cfg.OrderExchange}
-	for _, exchange := range exchangesToDeclare {
+	// Declare every exchange we produce to or consume from.
+	for _, exchange := range []string{r.cfg.OrderExchange, r.cfg.OrderPaymentExchange, r.cfg.DeliveryExchange} {
 		if err := r.declareExchange(r.publisher, exchange); err != nil {
-			slog.Error("declare topology", "op", "exchange", "err", err)
+			slog.Error("declare topology", "op", "exchange", "exchange", exchange, "err", err)
 			return
 		}
 	}
 
-	// Declare the entire topology up front, on the publisher channel, so
-	// queues/exchange are guaranteed to exist before any consumer starts.
+	// Declare all consumer queues + bindings up front, on the publisher channel.
 	for queue := range r.consumers {
 		if err := r.declareQueueAndBind(r.publisher, queue); err != nil {
 			slog.Error("declare topology", "queue", queue, "err", err)
 			return
 		}
-		slog.Info("queue ready", "queue", queue, "exchange", r.cfg.BillingExchange)
+		slog.Info("queue ready", "queue", queue)
 	}
 
 	wg := &sync.WaitGroup{}
@@ -176,7 +148,6 @@ func (r *RabbitImpl) runConsumer(queue string, handler HandlerFunc, wg *sync.Wai
 		slog.Error("create channel", "err", err)
 		return
 	}
-
 	defer ch.Close()
 
 	if err := ch.Qos(1, 0, false); err != nil {
@@ -196,12 +167,10 @@ func (r *RabbitImpl) runConsumer(queue string, handler HandlerFunc, wg *sync.Wai
 			msg.Nack(false, false)
 			continue
 		}
-
 		if !ok {
 			msg.Ack(false)
 			continue
 		}
-
 		msg.Ack(false)
 	}
 }

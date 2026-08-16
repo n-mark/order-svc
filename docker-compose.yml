@@ -54,7 +54,20 @@ services:
       # rabbitmq:
       #   condition: service_healthy
     environment:
-      BROKER_TYPE: ${BROKER_TYPE:-RABBITMQ}
+      # RABBITMQ | KAFKA — переключение реализации брокера
+      BROKER_TYPE: ${BROKER_TYPE:-KAFKA}
+
+      # --- Kafka (общий кластер в shared-network) ---
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-kafka-1:9092,kafka-2:9092,kafka-3:9092}
+      KAFKA_ORDER_TOPIC: "order"
+      KAFKA_ORDER_CREATED_EVENT_TYPE: "order.created"
+      KAFKA_ORDER_UPDATED_EVENT_TYPE: "order.updated"
+      KAFKA_BILLING_TOPIC: "billing"
+      KAFKA_BILLING_GROUP: "ordersvc.billing"
+      # замена биндинга billing.payment.*
+      KAFKA_BILLING_EVENT_TYPES: "billing.payment.success,billing.payment.required"
+
+      # --- RabbitMQ (legacy, при BROKER_TYPE=RABBITMQ) ---
 
       PG_HOST: postgres2
       PG_PORT: 5432
@@ -77,6 +90,9 @@ services:
       RABBIT_BILLING_EXCHANGE: ${RABBIT_BILLING_EXCHANGE:-billing}
       RABBIT_BILLING_CONSUMER: ${RABBIT_BILLING_CONSUMER:-ordersvc.consumer.for.billing.payment}
       RABBIT_BILLING_CONSUMER_ROUTING_KEY: ${RABBIT_BILLING_CONSUMER_ROUTING_KEY:-billing.payment.*}
+
+      DELIVERY_SVC_URL: "http://delivery-app:8080"
+      BILLING_SVC_URL: "http://billing-app:8080"
     ports:
       - "${APP_PORT:-8081}:8080"
     networks:

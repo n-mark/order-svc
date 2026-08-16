@@ -10,12 +10,13 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"billing-svc/internal/config"
-	"billing-svc/internal/handlers/ver1"
-	"billing-svc/internal/messaging"
-	"billing-svc/internal/server"
-	"billing-svc/internal/service"
-	"billing-svc/internal/store"
+	"order-svc/internal/clients"
+	"order-svc/internal/config"
+	"order-svc/internal/handlers/ver1"
+	"order-svc/internal/messaging"
+	"order-svc/internal/server"
+	"order-svc/internal/service"
+	"order-svc/internal/store"
 )
 
 func RunCommonServer() {
@@ -43,10 +44,14 @@ func RunCommonServer() {
 		os.Exit(1)
 	}
 
-	orderSvc := service.NewOrderService(pgStore, b)
+	advertClient := clients.NewAdvertClient(cfg.Rest.AdvertSvcURL)
+	deliveryClient := clients.NewDeliveryClient(cfg.Rest.DeliverySvcURL)
+	billingClient := clients.NewBillingClient(cfg.Rest.BillingSvcURL)
+	orderSvc := service.NewOrderService(pgStore, b, advertClient, deliveryClient, billingClient)
 	h := ver1.NewOrderHandler(*orderSvc)
 
-	b.RegisterConsumer(b.GetBillingPaymentDataSourceName(), h.UpdateOrderAfterBillingResponse)
+	b.RegisterConsumer(b.GetOrderPaymentSource(), h.OnOrderPayment)
+	b.RegisterConsumer(b.GetDeliverySource(), h.OnDeliveryStatus)
 
 	// HTTP and AMQP run in parallel; the AMQP Run() blocks until ctx is done
 	// (when it returns we shut down HTTP via the same ctx).
