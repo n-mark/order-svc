@@ -26,6 +26,7 @@ const (
 type OrderPaymentEvent struct {
 	EventId       uuid.UUID `json:"event_id"`
 	EventType     string    `json:"event_type"`
+	Version       string    `json:"version"`
 	OrderId       uuid.UUID `json:"order_id"`
 	UserId        int64     `json:"user_id"`
 	TransactionId uuid.UUID `json:"transaction_id"`
@@ -38,6 +39,7 @@ type OrderPaymentEvent struct {
 type DeliveryStatusEvent struct {
 	EventId    uuid.UUID `json:"event_id"`
 	EventType  string    `json:"event_type"`
+	Version    string    `json:"version"`
 	OrderId    uuid.UUID `json:"order_id"`
 	DeliveryId uuid.UUID `json:"delivery_id"`
 	Status     string    `json:"status"`
@@ -48,6 +50,7 @@ type DeliveryStatusEvent struct {
 type OrderEvent struct {
 	EventId    uuid.UUID        `json:"event_id"`
 	EventType  string           `json:"event_type"`
+	Version    string           `json:"version"`
 	OrderId    uuid.UUID        `json:"order_id"`
 	SellerId   int64            `json:"seller_id"`
 	ReceiverId int64            `json:"receiver_id"`

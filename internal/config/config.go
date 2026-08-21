@@ -117,9 +117,9 @@ func GetKafkaConfig() KafkaConfig {
 
 func initRestConfig() RestConfig {
 	return RestConfig{
-		AdvertSvcURL:   getenv("ADVERT_SVC_URL", "http://advert-cmd-svc:8080"),
-		DeliverySvcURL: getenv("DELIVERY_SVC_URL", "http://delivery-app:8080"),
-		BillingSvcURL:  getenv("BILLING_SVC_URL", "http://billing-app:8080"),
+		AdvertSvcURL:   getenv("ADVERT_CMD_URL", "http://advert-cmd-svc:8080"),
+		DeliverySvcURL: getenv("DELIVERY_URL", "http://delivery-service:8080"),
+		BillingSvcURL:  getenv("BILLING_URL", "http://billing-service:8080"),
 	}
 }
 

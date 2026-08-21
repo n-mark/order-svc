@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"order-svc/internal/handlers/ver1"
+	"order-svc/internal/prometheus"
 )
 
 func newServer(addr string, h http.Handler) *http.Server {
@@ -44,10 +46,13 @@ func RunRouter(ctx context.Context, h *ver1.OrderHandler) {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(requestLogger())
+	router.Use(prometheus.MetricsMiddleware())
 
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
+
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	api := router.Group("/api")
 	v1 := api.Group("/v1")

@@ -18,10 +18,12 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/order-svc ./
 
 # --- runtime stage ---
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM alpine:3.20
 WORKDIR /app
+
+RUN apk add --no-cache ca-certificates wget
 
 COPY --from=build /out/order-svc /app/order-svc
 
-USER nonroot:nonroot
+USER nobody:nobody
 ENTRYPOINT ["/app/order-svc"]

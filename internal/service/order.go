@@ -237,6 +237,7 @@ func (o *OrderService) OnOrderPayment(ctx context.Context, e models.OrderPayment
 	evt := models.OrderEvent{
 		EventId:    uuid.New(),
 		EventType:  models.EventTypeOrderPaid,
+		Version:    "1.0",
 		OrderId:    order.ID,
 		SellerId:   order.SellerId,
 		ReceiverId: order.ReceiverId,
@@ -308,6 +309,7 @@ func (o *OrderService) CancelOrder(ctx context.Context, orderId uuid.UUID) (mode
 	evt := models.OrderEvent{
 		EventId:   uuid.New(),
 		EventType: models.EventTypeOrderCancelled,
+		Version:   "1.0",
 		OrderId:   updated.ID,
 	}
 	if err := o.responseWriter.PublishOrderEvent(evt); err != nil {
