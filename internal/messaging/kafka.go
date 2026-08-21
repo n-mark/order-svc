@@ -98,20 +98,34 @@ func (k *KafkaImpl) Run() {
 func (k *KafkaImpl) runConsumer(c consumer, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	r := kafka.NewReader(kafka.ReaderConfig{
-		Brokers: k.cfg.Brokers,
-		Topic:   c.source.Name,
-		GroupID: c.source.Group,
-		// Manual commits: commit only after the handler succeeded, so a crash
-		// leads to redelivery instead of a lost message (at-least-once).
-		CommitInterval: 0,
-		MaxWait:        time.Second,
-	})
-	defer r.Close()
+	const reconnectBackoff = 2 * time.Second
 
-	slog.Info("kafka consumer started",
-		"topic", c.source.Name, "group", c.source.Group, "event_types", c.source.EventTypes)
+	for {
+		r := kafka.NewReader(kafka.ReaderConfig{
+			Brokers: k.cfg.Brokers,
+			Topic:   c.source.Name,
+			GroupID: c.source.Group,
+			// Manual commits: commit only after the handler succeeded, so a crash
+			// leads to redelivery instead of a lost message (at-least-once).
+			CommitInterval: 0,
+			MaxWait:        time.Second,
+		})
 
+		slog.Info("kafka consumer started",
+			"topic", c.source.Name, "group", c.source.Group, "event_types", c.source.EventTypes)
+
+		// consumeLoop only returns on a fatal read error (e.g. broker restart).
+		// Recreate the reader so the consumer keeps working without a rollout
+		// restart, instead of letting the goroutine die forever.
+		consumeLoop(r, c)
+		_ = r.Close()
+
+		slog.Warn("kafka consumer reconnecting", "topic", c.source.Name, "group", c.source.Group)
+		time.Sleep(reconnectBackoff)
+	}
+}
+
+func consumeLoop(r *kafka.Reader, c consumer) {
 	for {
 		msg, err := r.FetchMessage(context.Background())
 		if err != nil {
